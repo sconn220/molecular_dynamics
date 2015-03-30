@@ -24,6 +24,7 @@ real(8), dimension(4,3) :: fcc
 
 !Energy for a timestep
 real(8),allocatable,dimension(:) :: energy
-
+real(8),allocatable,dimension(:) :: energy_p
+real(8),allocatable,dimension(:) :: energy_k
 
 end module

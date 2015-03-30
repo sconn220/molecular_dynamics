@@ -5,15 +5,15 @@ program md
   implicit none
 
   !Program Settings
-  nxcells = 1    !Number of cells in the X direction
-  nycells = 1    !Number of cells in the Y direction
-  nzcells = 1    !Number of cells in the Z direction
+  nxcells = 2   !Number of cells in the X direction
+  nycells = 2   !Number of cells in the Y direction
+  nzcells = 2   !Number of cells in the Z direction
   
-  xcellscl = 1.0 !Width of cell in X direction
-  ycellscl = 1.0 !Width of cell in y direction
-  zcellscl = 1.0 !Width of cell in z direction
+  xcellscl = 1.125/0.5  !Width of cell in X direction
+  ycellscl = 1.125/0.5  !Width of cell in y direction
+  zcellscl = 1.125/0.5  !Width of cell in z direction
   
-  scalefactor = 2.5  
+  scalefactor = 1  
 
   ncells = nxcells*nycells*nzcells !Number of Total Boxes
   ppc = 4                          !Particle per Cell
@@ -23,8 +23,8 @@ program md
   ybound = nycells*ycellscl*scalefactor
   zbound = nzcells*zcellscl*scalefactor
   
-  !nprtl = ncells*ppc !number of particles
-  nprtl = 2
+  nprtl = ncells*ppc !number of particles
+  !nprtl = 4
 
   dt = 0.004
   
@@ -39,19 +39,22 @@ program md
   allocate(pos(nprtl,3,NT))   !allocate position
   allocate(vel(nprtl,3,NT))   !allocate velocity
   allocate(accel(nprtl,3,NT)) !allocate acceration
-  
-  pos = 0
-  vel = 0 
+  allocate(energy(NT))
+  allocate(energy_k(NT))
+  allocate(energy_p(NT))
+
+  pos   = 0
+  vel   = 0 
   accel = 0 
   
   !open(unit = 6, file = 'energy.out', status = 'unknown')
 
   !-----------Main Program-----------!
-  print*,"Main Program "
-  call bld_lattice_two_prtl
+  call bld_lattice
   call verlet_integration
   call writepos
-  call writeaccel 
+  call writevel 
+  call writeenergy
   !call bld_lattice  !Create inital position of gas particles
   !call force_lj(fcc(2,:),fcc(1,:),force_test)
   !print*,'force_test:',force_test
@@ -105,7 +108,7 @@ subroutine bld_lattice_two_prtl !{{{
   implicit none
 
   pos(1,:,1) = [0.d0,0.d0,0.d0]    
-  pos(2,:,1) = [0.d0,0.d0,1.125*1.d0]
+  pos(2,:,1) = [0.d0,0.d0,1.d0]
 
   vel(1,:,1) = [0.d0,0.d0,0.d0]
   vel(2,:,1) = [0.d0,0.d0,0.d0]
@@ -140,7 +143,7 @@ subroutine writevel!{{{
   open (unit = 2, file = 'vel.out', status = 'unknown')
   do ii = 1,nprtl
       do jj = 1,NT
-          write (2,*),ii,vel(ii,:,jj)
+          write (2,*),jj,vel(ii,:,jj)
       end do
   end do
 
@@ -158,9 +161,22 @@ subroutine writeaccel!{{{
   open (unit = 3, file = 'accel.out', status = 'unknown') 
   do ii = 1,nprtl
       do jj = 1, NT
-          write (3,*),jj,accel (ii,:,jj)
+          write (3,*),jj,accel(ii,:,jj)
       end do
   end do
+end subroutine!}}}
+!**************************************************************************
+subroutine writeenergy !{{{
+  !function: write energy if system for each time step to file
+  use global
+  
+  integer :: ii
+
+  open (unit = 7, file = 'energy.out' , status = 'unknown')
+  do ii = 1 , NT
+      write (7,*),ii,energy(ii),energy_k(ii),energy_p(ii)
+  end do 
+
 end subroutine!}}}
 !**************************************************************************
 subroutine scalerand(randvel)  !{{{
@@ -232,6 +248,9 @@ subroutine verlet_integration !{{{
 
       call accel_calc(ii+1)
       vel(:,:,ii+1) = vel(:,:,ii) + 0.5*(accel(:,:,ii+1)+accel(:,:,ii))*dt
+
+      call sys_energy(ii)
+
   end do 
 
 end subroutine !}}}
@@ -281,26 +300,25 @@ subroutine sys_energy(it) !{{{
   real(8) :: KEnergy   = 0      !Kinetic Energy
   real(8) :: LJPE_tot  = 0      !Total pot E for the time step
   real(8) :: KE_tot    = 0      !Total Kinetic Energy for the time step
-  integer :: it             !Current Iteration
-  integer :: ii, jj         !Indexers
+  integer :: it                 !Current Iteration
+  integer :: ii, jj             !Indexers
 
   
   do ii = 1, nprtl
       do jj = 1, nprtl 
           if (ii .ne. jj) then  
-              print*,'particle interaction:',ii,jj
               call Lennard_Jones_Potential(pos(ii,:,it),pos(jj,:,it),LJPEnergy) 
-              print*,'energy:',LJPEnergy
               LJPE_tot = LJPE_tot + LJPEnergy 
           end if 
       end do 
-      print*,'Particle vel test:',vel(ii,:,it)
       call kinetic_energy(vel(ii,:,it),KEnergy)
-      print*,'particle ke:', KEnergy
       KE_tot = KE_tot + KEnergy
   end do
-  energy = KE_tot + LJPE_tot
-  !write(6,*), energy, KE_tot , LJPE_tot
+  energy(it)   = KE_tot + LJPE_tot
+  energy_p(it) = LJPE_tot
+  energy_k(it) = KE_tot
+  KE_tot = 0 
+  LJPE_tot = 0
 end subroutine!}}}
 !**************************************************************************
 subroutine Lennard_Jones_Potential(pos1,pos2,p_energy)!{{{
@@ -329,7 +347,7 @@ subroutine Lennard_Jones_Potential(pos1,pos2,p_energy)!{{{
   
   !Input Variables
   real(8), dimension(3),intent(in) :: pos1,pos2
-  real(8), intent(out) :: p_energy
+  real(8) :: p_energy
 
   !Internal Variables
   real(8), dimension(3) :: r
